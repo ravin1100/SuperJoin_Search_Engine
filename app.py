@@ -103,6 +103,10 @@ with st.sidebar:
                         # 3. Enrich the data with the LLM to create LangChain Documents.
                         documents = create_langchain_documents(parsed_data)
 
+                        print("++++++++++++++++")
+                        print(documents)
+                        print("++++++++++++++++")
+
                         # 4. Add the enriched documents to the vector store.
                         add_documents(documents)
 

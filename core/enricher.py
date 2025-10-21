@@ -8,37 +8,23 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-# --- Environment and Model Initialization ---
-
-# Load environment variables from the .env file in the root directory.
-# This is where your GOOGLE_API_KEY should be stored.
 load_dotenv()
 
-# Check if the Google API key is available.
 if not os.getenv("GOOGLE_API_KEY"):
     raise ValueError(
         "GOOGLE_API_KEY not found in environment variables. Please set it in your .env file."
     )
 
-# Initialize the Gemini 1.5 Flash model through LangChain.
-# We configure it for deterministic output (temperature=0) suitable for data extraction.
-# The model is chosen for its speed and large context window, making it cost-effective.
+
 llm = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
+    model="gemini-2.0-flash",
     temperature=0,
     max_tokens=None,
     timeout=None,
     max_retries=2,
 )
 
-# --- Prompt Engineering ---
 
-# This prompt template is the core of the semantic enrichment process.
-# It acts as a set of instructions for the LLM.
-# 1. It sets the persona: "You are an expert business analyst..."
-# 2. It clearly defines the input variables it will receive from our parser ({...}).
-# 3. It provides a strict schema for the JSON output it must produce. This is crucial for reliable parsing.
-# 4. It includes an instruction to ONLY return the JSON object, preventing conversational filler.
 PROMPT_TEMPLATE = """
 You are an expert business analyst. Your task is to analyze a single spreadsheet cell's context
 and provide its semantic meaning in a structured JSON format. Do not provide any text or explanation
@@ -61,17 +47,11 @@ Based on this context, provide the following information in a JSON object with t
 JSON Output:
 """
 
-# Create a prompt template object from the string using LangChain.
-# This allows us to easily format the prompt with our data later.
 prompt = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
 
-# Create a basic string output parser. The LLM will return a string,
-# which we will then manually parse into JSON.
 parser = StrOutputParser()
 
-# Construct the processing chain using LangChain Expression Language (LCEL).
-# This is a modern, clean way to define a sequence of operations.
-# The flow is: take input data -> format it with the prompt -> send to the LLM -> get a string output.
+
 enrichment_chain = prompt | llm | parser
 
 

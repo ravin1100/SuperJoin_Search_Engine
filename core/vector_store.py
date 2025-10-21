@@ -2,18 +2,20 @@ import os
 from typing import List
 
 from dotenv import load_dotenv
-import chromadb
 
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_core.vectorstores import VectorStoreRetriever
+import getpass
 
 
-load_dotenv()
+# load_dotenv()
+if not os.getenv("GOOGLE_API_KEY"):
+    os.environ["GOOGLE_API_KEY"] = getpass.getpass("Enter your Google API key: ")
 
 # Initialize embeddings
-embedding_function = GoogleGenerativeAIEmbeddings(model="text-embedding-004")
+embedding_function = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
 
 # Initialize LangChain Chroma vector store with Chroma Cloud credentials
 vector_store = Chroma(
