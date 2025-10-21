@@ -6,3 +6,4 @@ langchain_chroma
 pandas
 openpyxl
 python-dotenv
+pydantic

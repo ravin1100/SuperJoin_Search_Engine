@@ -1,12 +1,13 @@
 import os
 import json
+import time
 from typing import List, Dict, Any
 
 from dotenv import load_dotenv
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.pydantic_v1 import BaseModel, Field
 
 load_dotenv()
 
@@ -15,128 +16,114 @@ if not os.getenv("GOOGLE_API_KEY"):
         "GOOGLE_API_KEY not found in environment variables. Please set it in your .env file."
     )
 
-
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.0-flash",
     temperature=0,
-    max_tokens=None,
-    timeout=None,
-    max_retries=2,
 )
 
 
+# --- Pydantic Model for Structured Output ---
+# This defines the exact JSON structure we want the LLM to return.
+# It's like a contract that the LLM must follow.
+class CellAnalysis(BaseModel):
+    concept_name: str = Field(
+        description="A clear business concept name (e.g., 'Total Revenue', 'Gross Margin Percentage')."
+    )
+    concept_category: str = Field(
+        description="A broader category (e.g., 'Profitability Metric', 'Growth Rate', 'KPI')."
+    )
+    explanation: str = Field(
+        description="A brief, one-sentence explanation of this cell's business purpose."
+    )
+    functional_type: str = Field(
+        description="The type of calculation (e.g., 'Summation', 'Percentage', 'Ratio')."
+    )
+
+
+class AnalysisList(BaseModel):
+    """A list of cell analysis results."""
+
+    analyses: List[CellAnalysis]
+
+
+# Use the .with_structured_output method to bind our Pydantic model to the LLM.
+# This forces the LLM's output into our desired format and handles parsing internally.
+structured_llm = llm.with_structured_output(AnalysisList)
+
+# --- Prompt Engineering for Batch Processing ---
+# The prompt is updated to handle a LIST of cell contexts at once.
 PROMPT_TEMPLATE = """
-You are an expert business analyst. Your task is to analyze a single spreadsheet cell's context
-and provide its semantic meaning in a structured JSON format. Do not provide any text or explanation
-outside of the JSON object.
+You are an expert business analyst. Your task is to analyze a batch of spreadsheet cell contexts
+and provide their semantic meaning. For each cell context provided in the list, generate a
+corresponding JSON object with the required semantic details.
 
-Here is the data for the cell:
-- Filename: "{filename}"
-- Sheet Name: "{sheet_name}"
-- Cell Address: "{cell_address}"
-- Formula: "{formula}"
-- Column Header: "{col_header}"
-- Row Header: "{row_header}"
+Respond with a single JSON object that contains a key "analyses", which holds a list of your analysis results.
+The order of your results in the list MUST match the order of the cell contexts in the input.
 
-Based on this context, provide the following information in a JSON object with these exact keys:
-1.  "concept_name": A clear business concept name (e.g., "Total Revenue", "Gross Margin Percentage", "Year-over-Year Sales Growth").
-2.  "concept_category": A broader category (e.g., "Profitability Metric", "Growth Rate", "Efficiency Ratio", "Key Performance Indicator").
-3.  "explanation": A brief, one-sentence explanation of what this cell represents in plain English for a business user.
-4.  "functional_type": The type of calculation being performed (e.g., "Summation", "Percentage", "Ratio", "Average", "Conditional Logic", "Lookup").
-
-JSON Output:
+Here is the list of cell contexts to analyze:
+{batch_input}
 """
 
 prompt = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-
-parser = StrOutputParser()
-
-
-enrichment_chain = prompt | llm | parser
+enrichment_chain = prompt | structured_llm
 
 
-# --- Main Enrichment Function ---
-
-
+# --- Main Enrichment Function (Now with Batching) ---
 def create_langchain_documents(
     parsed_data_list: List[Dict[str, Any]],
 ) -> List[Document]:
-    """
-    Enriches parsed spreadsheet data using an LLM and converts it into LangChain Documents.
-
-    This function iterates through a list of cell data dictionaries (from parser.py),
-    uses a Gemini-powered chain to infer semantic meaning, and then constructs
-    LangChain Document objects that are ready for embedding and indexing.
-
-    Args:
-        parsed_data_list: A list of dictionaries, where each dictionary represents
-                          a parsed formula cell from the spreadsheet.
-
-    Returns:
-        A list of LangChain Document objects, ready for ingestion into a vector store.
-    """
-    # This list will hold the final, enriched Document objects.
     langchain_documents = []
+    batch_size = 10  # Process 10 cells per API call to respect rate limits
 
-    # Process each parsed cell one by one.
-    for cell_data in parsed_data_list:
+    # Process the data in chunks (batches)
+    for i in range(0, len(parsed_data_list), batch_size):
+        # Get the current batch of cell data
+        batch_data = parsed_data_list[i : i + batch_size]
+
+        # Format the batch data into a string for the prompt
+        # We use json.dumps for clean, structured formatting
+        batch_input_str = json.dumps(batch_data, indent=2)
+
+        print(f"Processing batch {i//batch_size + 1} with {len(batch_data)} cells...")
+
         try:
-            # The input for our chain requires the context data to be flattened.
-            # We create a dictionary that matches the placeholders in our prompt template.
-            chain_input = {
-                "filename": cell_data.get("filename"),
-                "sheet_name": cell_data.get("sheet_name"),
-                "cell_address": cell_data.get("cell_address"),
-                "formula": cell_data.get("formula", ""),
-                "col_header": cell_data.get("context", {}).get("column_header", "N/A"),
-                "row_header": cell_data.get("context", {}).get("row_header", "N/A"),
-            }
+            # Invoke the chain with the entire batch
+            response_model = enrichment_chain.invoke({"batch_input": batch_input_str})
 
-            # Invoke the chain with the prepared input to get the LLM's response.
-            llm_response_str = enrichment_chain.invoke(chain_input)
+            # The response is now a Pydantic object, not a string!
+            semantic_data_list = response_model.analyses
 
-            # The LLM's response is a string containing JSON. We need to parse it.
-            # This is a critical step that can fail if the LLM deviates from the prompt.
-            semantic_data = json.loads(llm_response_str)
+            if len(semantic_data_list) != len(batch_data):
+                print(
+                    f"Warning: Mismatch between batch size ({len(batch_data)}) and response count ({len(semantic_data_list)}). Skipping batch."
+                )
+                continue
 
-            # --- Construct the Document for Vectorization ---
+            # Correlate the results back to the original batch data
+            for original_cell, semantic_data in zip(batch_data, semantic_data_list):
+                page_content = (
+                    f"Concept: {semantic_data.concept_name}. "
+                    f"Category: {semantic_data.concept_category}. "
+                    f"Description: {semantic_data.explanation}"
+                )
 
-            # 1. Create the `page_content`: This is the rich text that will be embedded.
-            # It's a synthesis of the most important semantic information.
-            page_content = (
-                f"Concept: {semantic_data.get('concept_name', 'N/A')}. "
-                f"Category: {semantic_data.get('concept_category', 'N/A')}. "
-                f"Description: {semantic_data.get('explanation', 'N/A')}"
-            )
+                metadata = {
+                    "source": original_cell.get("filename"),
+                    "sheet_name": original_cell.get("sheet_name"),
+                    "cell_address": original_cell.get("cell_address"),
+                    "formula": original_cell.get("formula"),
+                    "concept_name": semantic_data.concept_name,
+                    "concept_category": semantic_data.concept_category,
+                    "explanation": semantic_data.explanation,
+                }
 
-            # 2. Create the `metadata`: This is all the structured data we want to
-            # store alongside the vector. It's used for filtering (e.g., by filename)
-            # and for displaying results to the user.
-            metadata = {
-                "source": cell_data.get("filename"),
-                "sheet_name": cell_data.get("sheet_name"),
-                "cell_address": cell_data.get("cell_address"),
-                "formula": cell_data.get("formula"),
-                "concept_name": semantic_data.get("concept_name"),
-                "concept_category": semantic_data.get("concept_category"),
-                "explanation": semantic_data.get("explanation"),
-            }
+                doc = Document(page_content=page_content, metadata=metadata)
+                langchain_documents.append(doc)
 
-            # Create the final LangChain Document object and add it to our list.
-            doc = Document(page_content=page_content, metadata=metadata)
-            langchain_documents.append(doc)
-
-        except json.JSONDecodeError:
-            # If the LLM returns a malformed string that isn't valid JSON,
-            # we print an error and skip this cell to avoid crashing the whole process.
-            print(
-                f"Error: Could not decode JSON for cell {cell_data.get('cell_address')} in {cell_data.get('filename')}."
-            )
-            print(f"LLM Response was: {llm_response_str}")
         except Exception as e:
-            # Catch any other unexpected errors during processing.
-            print(
-                f"An unexpected error occurred for cell {cell_data.get('cell_address')}: {e}"
-            )
+            print(f"An error occurred during batch processing: {e}")
+
+        # Add a small delay to be extra safe with rate limits
+        time.sleep(2)
 
     return langchain_documents
