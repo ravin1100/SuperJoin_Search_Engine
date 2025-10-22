@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.pydantic_v1 import BaseModel, Field
+from pydantic import BaseModel, Field
 
 load_dotenv()
 
@@ -22,21 +22,18 @@ llm = ChatGoogleGenerativeAI(
 )
 
 
-# --- Pydantic Model for Structured Output ---
-# This defines the exact JSON structure we want the LLM to return.
-# It's like a contract that the LLM must follow.
 class CellAnalysis(BaseModel):
     concept_name: str = Field(
-        description="A clear business concept name (e.g., 'Total Revenue', 'Gross Margin Percentage')."
+        description="A clear business concept name (e.g., 'Total Revenue', 'Gross Margin Percentage' etc)."
     )
     concept_category: str = Field(
-        description="A broader category (e.g., 'Profitability Metric', 'Growth Rate', 'KPI')."
+        description="A broader category (e.g., 'Profitability Metric', 'Growth Rate', 'KPI' etc)."
     )
     explanation: str = Field(
         description="A brief, one-sentence explanation of this cell's business purpose."
     )
     functional_type: str = Field(
-        description="The type of calculation (e.g., 'Summation', 'Percentage', 'Ratio')."
+        description="The type of calculation (e.g., 'Summation', 'Percentage', 'Ratio', 'Average', 'Conditional Logic', 'Lookup' etc)."
     )
 
 
@@ -104,6 +101,7 @@ def create_langchain_documents(
                 page_content = (
                     f"Concept: {semantic_data.concept_name}. "
                     f"Category: {semantic_data.concept_category}. "
+                    f"Function: {semantic_data.functional_type}. "
                     f"Description: {semantic_data.explanation}"
                 )
 
@@ -115,6 +113,7 @@ def create_langchain_documents(
                     "concept_name": semantic_data.concept_name,
                     "concept_category": semantic_data.concept_category,
                     "explanation": semantic_data.explanation,
+                    "functional_type": semantic_data.functional_type,
                 }
 
                 doc = Document(page_content=page_content, metadata=metadata)

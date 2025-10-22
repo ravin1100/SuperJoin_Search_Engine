@@ -1,14 +1,9 @@
 import streamlit as st
-import os
-from typing import List, Dict, Any
+from typing import List, Any
 
-# Import the core logic functions from your backend modules.
-# This clean separation of concerns makes the app easier to manage.
 from core.parser import parse_spreadsheet
 from core.enricher import create_langchain_documents
 from core.vector_store import add_documents, delete_documents, get_retriever
-
-# --- Helper Functions ---
 
 
 def format_results(documents: List[Any]) -> str:
@@ -103,10 +98,6 @@ with st.sidebar:
                         # 3. Enrich the data with the LLM to create LangChain Documents.
                         documents = create_langchain_documents(parsed_data)
 
-                        print("++++++++++++++++")
-                        print(documents)
-                        print("++++++++++++++++")
-
                         # 4. Add the enriched documents to the vector store.
                         add_documents(documents)
 
@@ -166,7 +157,6 @@ if query := st.chat_input(
             retriever = get_retriever()
 
             # 2. Invoke the retriever to find relevant documents.
-            # This performs the core semantic search in Chroma Cloud.
             relevant_docs = retriever.invoke(query)
 
             # 3. Format the results into a readable response.

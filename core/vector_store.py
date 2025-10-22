@@ -40,32 +40,20 @@ def add_documents(documents: List[Document]) -> None:
         print(f"Error adding documents: {e}")
 
 
-def delete_documents(filename: str) -> None:
-    if not filename:
-        print("Error: filename must be provided.")
-        return
-
-    try:
-        # To delete, we need the collection object. We can get it from the client.
-        collection = vector_store.get_collection(name=os.getenv("CHROMA_COLLECTION"))
-
-        # Find the IDs of documents to delete.
-        ids_to_delete = collection.get(where={"source": filename})["ids"]
-
-        if not ids_to_delete:
-            print(f"No documents found for filename '{filename}'. Nothing to delete.")
-            return
-
-        # Use the collected IDs to perform the deletion.
-        collection.delete(ids=ids_to_delete)
-        print(
-            f"Successfully deleted {len(ids_to_delete)} documents for filename: '{filename}'."
-        )
-    except Exception as e:
-        print(
-            f"An error occurred while deleting documents for filename '{filename}': {e}"
-        )
-
-
 def get_retriever(k_results: int = 5) -> VectorStoreRetriever:
     return vector_store.as_retriever(search_kwargs={"k": k_results})
+
+
+def delete_documents(source_file: str) -> None:
+    """
+    Removes all documents associated with a specific file from the vector store.
+    
+    Args:
+        source_file: The name of the file to unindex.
+    """
+    try:
+        # Delete documents where the 'source' metadata field matches the specified filename
+        vector_store.delete(where={"source": source_file})
+        print(f"Successfully removed all documents from {source_file}.")
+    except Exception as e:
+        print(f"Error removing documents: {e}")
